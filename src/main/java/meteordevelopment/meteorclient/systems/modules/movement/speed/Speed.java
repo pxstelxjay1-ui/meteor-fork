@@ -12,6 +12,7 @@ import meteordevelopment.meteorclient.settings.*;
 import meteordevelopment.meteorclient.systems.modules.Categories;
 import meteordevelopment.meteorclient.systems.modules.Module;
 import meteordevelopment.meteorclient.systems.modules.Modules;
+import meteordevelopment.meteorclient.utils.player.GrimUtils;
 import meteordevelopment.meteorclient.systems.modules.movement.speed.modes.Strafe;
 import meteordevelopment.meteorclient.systems.modules.movement.speed.modes.Vanilla;
 import meteordevelopment.meteorclient.systems.modules.world.Timer;
