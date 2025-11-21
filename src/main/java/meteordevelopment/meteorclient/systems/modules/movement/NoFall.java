@@ -113,19 +113,27 @@ public class NoFall extends Module {
 
     @EventHandler
     private void onSendPacket(PacketEvent.Send event) {
+        if (!(event.packet instanceof PlayerMoveC2SPacket packet)) return;
+        if (mode.get() != Mode.Packet) return;
+        if (mc.player.getAbilities().creativeMode || mc.player.isGliding()) return;
         if (pauseOnMace.get() && mc.player.getMainHandStack().getItem() instanceof MaceItem) return;
-        if (mc.player.getAbilities().creativeMode
-            || !(event.packet instanceof PlayerMoveC2SPacket)
-            || mode.get() != Mode.Packet
-            || ((IPlayerMoveC2SPacket) event.packet).meteor$getTag() == 1337) return;
+        if (((IPlayerMoveC2SPacket) packet).meteor$getTag() == 1337) return;
 
+        // Grim bypass: spoof onGround + periodic Y-drop
+        if (mc.player.fallDistance > 2.5 || mc.player.getVelocity().y < -0.5) {
+            ((PlayerMoveC2SPacketAccessor) packet).meteor$setOnGround(true);
 
-        if (!Modules.get().isActive(Flight.class)) {
-            if (mc.player.isGliding()) return;
-            if (mc.player.getVelocity().y > -0.5) return;
-            ((PlayerMoveC2SPacketAccessor) event.packet).meteor$setOnGround(true);
-        } else {
-            ((PlayerMoveC2SPacketAccessor) event.packet).meteor$setOnGround(true);
+            // Every ~2 seconds: send a tiny Y-drop to reset Grim's floating ticks
+            if (mc.player.age % (38 + (int)(Math.random() * 5)) == 0) {
+                double drop = 1.49 + Math.random() * 0.02; // 1.49–1.51
+                mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(
+                    mc.player.getX(),
+                    mc.player.getY() - drop,
+                    mc.player.getZ(),
+                    true,
+                    false
+                ));
+            }
         }
     }
 

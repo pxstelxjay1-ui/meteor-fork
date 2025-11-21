@@ -17,10 +17,7 @@ import meteordevelopment.meteorclient.utils.entity.EntityUtils;
 import meteordevelopment.meteorclient.utils.entity.SortPriority;
 import meteordevelopment.meteorclient.utils.entity.Target;
 import meteordevelopment.meteorclient.utils.entity.TargetUtils;
-import meteordevelopment.meteorclient.utils.player.FindItemResult;
-import meteordevelopment.meteorclient.utils.player.InvUtils;
-import meteordevelopment.meteorclient.utils.player.PlayerUtils;
-import meteordevelopment.meteorclient.utils.player.Rotations;
+import meteordevelopment.meteorclient.utils.player.*;
 import meteordevelopment.meteorclient.utils.world.TickRate;
 import meteordevelopment.orbit.EventHandler;
 import net.minecraft.entity.Entity;
@@ -37,12 +34,14 @@ import net.minecraft.item.AxeItem;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.MaceItem;
 import net.minecraft.item.TridentItem;
+import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.world.GameMode;
+import net.minecraft.util.math.Vec3d;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -144,7 +143,7 @@ public class KillAura extends Module {
     private final Setting<Double> range = sgTargeting.add(new DoubleSetting.Builder()
         .name("range")
         .description("The maximum range the entity can be to attack it.")
-        .defaultValue(4.5)
+        .defaultValue(3.009)
         .min(0)
         .sliderMax(6)
         .build()
@@ -338,13 +337,45 @@ public class KillAura extends Module {
         }
 
         attacking = true;
-        if (rotation.get() == RotationMode.Always) Rotations.rotate(Rotations.getYaw(primary), Rotations.getPitch(primary, Target.Body));
+
+        // === GRIM BYPASS ROTATIONS ===
+        if (GrimUtils.grimBypass) {
+            Vec3d eyePos = mc.player.getEyePos();
+            Vec3d targetVec = primary.getBoundingBox().getCenter();
+            float[] grimRot = GrimUtils.getGrimRotations(eyePos, targetVec, (LivingEntity) primary);
+
+            mc.player.setYaw(grimRot[0]);
+            mc.player.setPitch(grimRot[1]);
+        } else if (rotation.get() == RotationMode.Always) {
+            Rotations.rotate(Rotations.getYaw(primary), Rotations.getPitch(primary, Target.Body));
+        }
+
         if (pauseOnCombat.get() && PathManagers.get().isPathing() && !wasPathing) {
             PathManagers.get().pause();
             wasPathing = true;
         }
 
-        if (delayCheck()) targets.forEach(this::attack);
+        if (delayCheck()) targets.forEach(it -> {
+            // === GRIM REACH 3.009 + PACKET ORDER ===
+            double dist = mc.player.getEyePos().distanceTo(it.getBoundingBox().getCenter());
+            if (dist > 3.009) return; // Grim hard limit
+
+            mc.interactionManager.attackEntity(mc.player, it);
+            mc.player.swingHand(Hand.MAIN_HAND);
+
+            // 5% random crits (Grim loves this)
+            if (Math.random() < 0.05) { // 5% random crits – Grim loves this
+                mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.Full(
+                    mc.player.getX(),
+                    mc.player.getY() + 0.0625,     // tiny jump to fake crit
+                    mc.player.getZ(),
+                    mc.player.getYaw(),
+                    mc.player.getPitch(),
+                    true,                          // onGround
+                    false                         // heightmap (always false)
+                ));
+            }
+        });
     }
 
     @EventHandler
