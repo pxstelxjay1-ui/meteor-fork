@@ -122,7 +122,7 @@ public class Scaffold extends Module {
         if (onlyOnClick.get() && !mc.options.useKey.isPressed()) return;
 
         // === PREDICT POSITION FOR NEXT TICK (Grim simulates this) ===
-        Vec3d predictedPos = mc.player.getPos().add(mc.player.getVelocity());
+        Vec3d predictedPos = mc.player.getPosition().add(mc.player.getVelocity());
         bp.set(predictedPos.x, predictedPos.y - 0.78, predictedPos.z);
 
         // Sneak down one block if sneaking
