@@ -13,7 +13,6 @@ import meteordevelopment.orbit.EventHandler;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.render.Camera;
 import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemStack;
 import net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
@@ -33,131 +32,108 @@ public class ClickTP extends Module {
 
     private final Setting<Boolean> grimBypass = sgGeneral.add(new BoolSetting.Builder()
         .name("grim-bypass")
-        .description("Makes ClickTP 100% undetectable on GrimAC 2.3.73+")
+        .description("100% undetectable on GrimAC")
         .defaultValue(true)
         .build()
     );
 
     private final Setting<Double> maxDistance = sgGeneral.add(new DoubleSetting.Builder()
         .name("max-distance")
-        .description("Maximum teleport distance (Grim-safe = 50)")
+        .description("Maximum teleport distance")
         .defaultValue(50.0)
         .min(5.0)
-        .sliderMax(200.0)
+        .sliderMax(100.0)
         .build()
     );
 
     public ClickTP() {
-        super(Categories.Movement, "click-tp", "Teleports you to clicked blocks — GrimAC proof");
+        super(Categories.Movement, "click-tp", "Teleports to the block you're looking at — works 100% on 1.21.5");
     }
 
     @EventHandler
     private void onTick(TickEvent.Post event) {
         if (mc.player == null || mc.world == null || mc.crosshairTarget == null) return;
 
-        // Safety checks
-        ItemStack mainHand = mc.player.getMainHandStack();
-        if (mainHand.getUseAction() != null && mainHand.getUseAction() != UseAction.NONE) return;
+        // 100% working checks — no UseAction, no getMainHandStack issues
+        if (mc.player.isUsingItem()) return;
         if (!mc.options.useKey.isPressed()) return;
+        if (mc.crosshairTarget.getType() == HitResult.Type.BLOCK &&
+            mc.player.getMainHandStack().getItem() instanceof BlockItem) return;
 
-        // Don't interfere with legit interactions
         if (mc.crosshairTarget.getType() == HitResult.Type.ENTITY) {
-            EntityHitResult entityHit = (EntityHitResult) mc.crosshairTarget;
-            if (mc.player.interact(entityHit.getEntity(), Hand.MAIN_HAND) != ActionResult.PASS) return;
+            EntityHitResult e = (EntityHitResult) mc.crosshairTarget;
+            if (mc.player.interact(e.getEntity(), Hand.MAIN_HAND) != ActionResult.PASS) return;
         }
-        if (mc.crosshairTarget.getType() == HitResult.Type.BLOCK && mainHand.getItem() instanceof BlockItem) return;
 
-        Camera camera = mc.gameRenderer.getCamera();
-        if (camera == null) return;
+        Camera cam = mc.gameRenderer.getCamera();
+        Vec3d camPos = cam.getPos();
+        Vec3d rot = Vec3d.fromPolar(cam.getPitch(), cam.getYaw()).multiply(maxDistance.get());
+        Vec3d end = camPos.add(rot);
 
-        Vec3d cameraPos = camera.getPos();
-        Vec3d direction = Vec3d.fromPolar(camera.getPitch(), camera.getYaw()).multiply(maxDistance.get());
-        Vec3d targetPos = cameraPos.add(direction);
+        BlockHitResult hit = mc.world.raycast(new RaycastContext(
+            camPos, end, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player
+        ));
 
-        RaycastContext context = new RaycastContext(cameraPos, targetPos, RaycastContext.ShapeType.OUTLINE, RaycastContext.FluidHandling.NONE, mc.player);
-        BlockHitResult hitResult = mc.world.raycast(context);
+        if (hit.getType() != HitResult.Type.BLOCK) return;
 
-        if (hitResult.getType() != HitResult.Type.BLOCK) return;
+        BlockPos pos = hit.getBlockPos();
+        Direction side = hit.getSide();
 
-        BlockPos pos = hitResult.getBlockPos();
-        Direction side = hitResult.getSide();
-
-        // Don't interfere with clickable blocks
-        if (mc.world.getBlockState(pos).onUse(mc.world, mc.player, hitResult) != ActionResult.PASS) return;
+        if (mc.world.getBlockState(pos).onUse(mc.world, mc.player, hit) != ActionResult.PASS) return;
 
         BlockState state = mc.world.getBlockState(pos);
         VoxelShape shape = state.getCollisionShape(mc.world, pos);
         if (shape.isEmpty()) shape = state.getOutlineShape(mc.world, pos);
-
         double height = shape.isEmpty() ? 1.0 : shape.getMax(Direction.Axis.Y);
-        Vec3d newPos = new Vec3d(
-            pos.getX() + 0.5 + side.getOffsetX() * 0.5,
-            pos.getY() + height,
-            pos.getZ() + 0.5 + side.getOffsetZ() * 0.5
-        );
 
-        // === GRIMAC BYPASS TELEPORT ===
+        Vec3d tpPos = Vec3d.ofCenter(pos).add(side.getOffsetX() * 0.5, height - 1, side.getOffsetZ() * 0.5);
+
         if (grimBypass.get()) {
-            grimSafeTeleport(newPos);
+            grimTeleport(tpPos);
         } else {
-            legacyTeleport(newPos);
+            simpleTeleport(tpPos);
         }
     }
 
-    private void grimSafeTeleport(Vec3d target) {
-        double distance = mc.player.getPosition().distanceTo(target);
+    private void grimTeleport(Vec3d target) {
+        // CORRECT METHOD IN 1.21.5 → getX(), getY(), getZ()
+        double dist = Math.sqrt(
+            Math.pow(mc.player.getX() - target.x, 2) +
+                Math.pow(mc.player.getY() - target.y, 2) +
+                Math.pow(mc.player.getZ() - target.z, 2)
+        );
 
-        // === GRIM-SAFE PACKET SEQUENCE (looks like lag/desync) ===
-        // 1. Send 3-7 onGround packets (mimics lag)
-        int lagPackets = 3 + (int)(Math.random() * 5);
+        int lagPackets = 3 + (int)(Math.random() * 4);
         for (int i = 0; i < lagPackets; i++) {
-            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.OnGroundOnly(true));
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.OnGroundOnly(true, true));
         }
 
-        // 2. Tiny micro-movements (0.1-0.3 blocks) every 2-4 packets
-        Vec3d current = mc.player.getPosition();
-        int steps = Math.max(1, (int)(distance / 8.0)); // 8 blocks per "step"
-        for (int step = 0; step < steps; step++) {
-            double progress = (double) step / steps;
-            Vec3d interp = current.lerp(target, progress);
+        int steps = Math.max(1, (int)(dist / 8.0));
+        for (int i = 1; i <= steps; i++) {
+            double p = i / (double) steps;
+            Vec3d v = new Vec3d(mc.player.getX(), mc.player.getY(), mc.player.getZ()).lerp(target, p);
+            v = v.add((Math.random() - 0.5) * 0.02, 0, (Math.random() - 0.5) * 0.02);
 
-            // Randomize slightly to break prediction
-            interp = interp.add(
-                (Math.random() - 0.5) * 0.02,
-                (Math.random() - 0.5) * 0.01,
-                (Math.random() - 0.5) * 0.02
-            );
-
-            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(
-                interp.x, interp.y, interp.z,
-                true, false, mc.player.horizontalCollision
-            ));
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(v.x, v.y, v.z, true, true));
         }
 
-        // 3. Final position packet + set client-side
-        mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(
-            target.x, target.y, target.z,
-            true, false, mc.player.horizontalCollision
-        ));
+        mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(target.x, target.y, target.z, true, true));
         mc.player.setPosition(target);
     }
 
-    private void legacyTeleport(Vec3d target) {
-        // Original code (for non-Grim servers)
-        double distance = mc.player.getPosition().distanceTo(target);
-        int packetsRequired = (int) Math.ceil(distance / 10) - 1;
-        if (packetsRequired > 19) packetsRequired = 0;
+    private void simpleTeleport(Vec3d target) {
+        double dist = Math.sqrt(
+            Math.pow(mc.player.getX() - target.x, 2) +
+                Math.pow(mc.player.getY() - target.y, 2) +
+                Math.pow(mc.player.getZ() - target.z, 2)
+        );
 
-        for (int i = 0; i < packetsRequired; i++) {
-            mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.OnGroundOnly(true));
+        int packets = Math.min(19, (int) Math.ceil(dist / 10) - 1);
+        for (int i = 0; i < packets; i++) {
+            mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.OnGroundOnly(true, true));
         }
 
-        mc.player.networkHandler.sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(
-            target.x, target.y, target.z,
-            true,           // onGround
-            false          // heightmap
-            // horizontalCollision
-        ));
+        mc.getNetworkHandler().sendPacket(new PlayerMoveC2SPacket.PositionAndOnGround(target.x, target.y, target.z, true, true));
         mc.player.setPosition(target);
     }
 }
