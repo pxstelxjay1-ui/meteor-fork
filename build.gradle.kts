@@ -173,7 +173,7 @@ tasks {
         from(project(":launch").layout.buildDirectory.dir("classes/java/main"))
 
         manifest {
-            attributes["Main-Class"] = "meteordevelopment.meteorclient.Main"
+            attributes["Main-Class"] = "fireworks.meteor-fork.Main"
         }
     }
 
@@ -212,7 +212,7 @@ publishing {
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
-            artifactId = "meteor-client"
+            artifactId = "meteor-fork"
 
             version = libs.versions.minecraft.get() + "-SNAPSHOT"
         }
